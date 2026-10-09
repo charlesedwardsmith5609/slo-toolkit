@@ -116,10 +116,12 @@ class SLOComplianceReport:
     @property
     def error_budget_consumed_fraction(self) -> float:
         """
-        Alias for rate_budget_ratio (kept for API compatibility).
+        Deprecated alias for :attr:`rate_budget_ratio`.
 
-        Prefer rate_budget_ratio or cumulative_budget_consumed_fraction
-        depending on whether you mean pace or absolute allowance used.
+        The name suggests calendar/absolute consumption; it is only
+        ``observed_error_rate / error_budget``. Prefer ``rate_budget_ratio``
+        for pace, or ``cumulative_budget_consumed_fraction(hours_elapsed)``
+        for absolute allowance used so far.
         """
         return self.rate_budget_ratio
 

@@ -6,7 +6,7 @@ to the allowed rate. A burn rate of 1x means you are consuming exactly at the
 rate that would exhaust your budget at the end of the compliance window.
 A burn rate of 2x means you'll exhaust it in half the time.
 
-Multi-window burn rate alerting (Google SRE Book, Chapter 5):
+Multi-window burn rate alerting (Google SRE Workbook, Alerting on SLOs):
   - Fast burn (2% budget in 1h)  → page immediately
   - Slow burn (5% budget in 6h)  → page, less urgent
   - Very slow (10% budget in 3d) → ticket
@@ -30,7 +30,9 @@ class BurnRateResult:
     burn_rate: float  # Current burn rate (1.0 = sustainable)
     time_to_exhaustion_hours: Optional[float]  # Hours until budget exhausted
     compliance_window_hours: float  # SLO compliance window
-    budget_remaining_pct: float  # % of *passed-in* budget remaining
+    # Remaining % of caller-supplied cumulative budget (1 - budget_consumed_fraction).
+    # Default calculate() passes consumed=0 → this shows 100%, not "month left."
+    budget_remaining_pct: float
     status: BurnRateStatus
     sli_type: SLIType = SLIType.AVAILABILITY
     bad_events: Optional[int] = None

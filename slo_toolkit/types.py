@@ -17,10 +17,11 @@ class BurnRateStatus(str, Enum):
 
 class SLIType(str, Enum):
     """
-    Service level indicator shape.
+    Service level indicator category (availability / latency / freshness).
 
-    Affects metric contracts and alert copy — not the burn-rate math itself,
-    which is always good/bad event (or error-rate) based.
+    Used as a label on reports and generated alerts only. Burn-rate math is
+    always good/bad events or an error rate — SLIType does not change formulas
+    or MetricContract defaults.
     """
 
     AVAILABILITY = "availability"

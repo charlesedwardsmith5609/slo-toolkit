@@ -1,12 +1,14 @@
 """
 Command-line interface for slo-toolkit.
 
-Usage examples:
+Quick examples:
 
   slo-toolkit burn-rate --slo 0.999 --error-rate 0.005
   slo-toolkit burn-rate --slo 0.999 --bad 25 --total 10000
   slo-toolkit alerts --slo 0.999 --service checkout --format prometheus --env production
-  slo-toolkit compliance --slo 0.999 --total 1000000 --errors 250
+  slo-toolkit compliance --slo 0.999 --total 1000000 --errors 250 --window 30
+
+See the README for budget vocabulary and constant_rate vs time_pace projection.
 """
 
 from __future__ import annotations
@@ -164,7 +166,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     br.add_argument("--bad", type=int, default=None, help="Bad event count")
     br.add_argument("--total", type=int, default=None, help="Total event count")
     br.add_argument("--window", type=int, default=30, help="Compliance window in days")
-    br.add_argument("--consumed", type=float, default=0.0, help="Cumulative budget spent (0–1)")
+    br.add_argument(
+        "--consumed",
+        type=float,
+        default=0.0,
+        help="Cumulative error-budget fraction already spent (0–1); not the burn rate",
+    )
     br.add_argument("--sli-type", choices=sli_choices, default=SLIType.AVAILABILITY.value)
     br.add_argument("--json", action="store_true", help="Output as JSON")
     br.set_defaults(func=cmd_burn_rate)

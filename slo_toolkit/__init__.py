@@ -1,6 +1,6 @@
 """
-slo-toolkit: Calculate burn rates, generate multi-window alert thresholds,
-and evaluate SLO compliance for distributed systems.
+slo-toolkit: offline SLO burn-rate calculator, multi-window alert config
+generator, and compliance reporter (no live metric scraping).
 """
 
 from .alert_config import AlertConfig, AlertConfigGenerator, MetricContract

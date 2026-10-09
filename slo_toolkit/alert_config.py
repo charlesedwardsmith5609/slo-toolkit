@@ -1,12 +1,14 @@
 """
 Generate multi-window burn rate alert configurations.
 
-Implements the Google SRE Book Chapter 5 multi-window alerting strategy:
+Implements the Google SRE Workbook multi-window alerting strategy
+(Alerting on SLOs):
   - Short window catches fast-burning incidents quickly
   - Long window guards against false positives from short spikes
   - Both windows must trigger simultaneously for an alert to fire
 
 Outputs versioned JSON plus Prometheus and Datadog exporters.
+Review generated configs before applying them to a live stack.
 """
 
 from __future__ import annotations
@@ -196,8 +198,8 @@ class AlertConfig:
         Emit Datadog monitor definitions as JSON.
 
         Uses formula monitors so BOTH short and long windows must exceed the
-        error-rate threshold (composite intent that applies cleanly via API).
-        Review queries against your actual metric names before apply.
+        error-rate threshold. Treat output as a template: confirm metric names,
+        formula syntax, and paging handles in your Datadog account before apply.
         """
         mc = self.metric_contract
         env = self.environment

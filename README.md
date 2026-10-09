@@ -2,7 +2,22 @@
 
 Offline SLO burn rate calculator, multi-window alert config generator, and compliance reporter.
 
-Built on the multi-window burn rate alerting strategy from the [Google SRE Workbook](https://sre.google/workbook/alerting-on-slos/). It emits **versioned JSON**, **Prometheus** rules (with recording rules + `for:`), and **Datadog formula** monitor JSON — it does not scrape metrics or call vendor APIs.
+**In one sentence:** you give it an SLO target and how many requests failed; it tells you how fast you are burning error budget and can emit Prometheus / Datadog alert configs. It does **not** scrape metrics or call vendor APIs.
+
+Built on the multi-window burn rate alerting strategy from the [Google SRE Workbook — Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/).
+
+## Quick start
+
+```bash
+pip install -e .
+slo-toolkit burn-rate --slo 0.999 --error-rate 0.005
+```
+
+```text
+Burn Rate: 5.00x  |  Budget remaining: 100.0%  |  Time to exhaustion: 144.0h  |  Status: ELEVATED
+```
+
+That means: against a 99.9% SLO (0.1% allowed errors), a 0.5% error rate is burning budget **5×** faster than sustainable. At that pace, a full 30-day budget would last about 144 hours. Status values are `OK`, `ELEVATED`, `WARNING`, `CRITICAL`, and `EXHAUSTED`.
 
 ## Scope
 
@@ -10,24 +25,27 @@ Built on the multi-window burn rate alerting strategy from the [Google SRE Workb
 |----------|--------------|
 | Burn rate from rates or good/bad counts | Live metric collection |
 | Multi-window alert thresholds (window-clamped) | Vendor SDKs / apply APIs |
-| Prometheus + Datadog config export | Ticketing / paging integrations |
+| Prometheus + Datadog config export (review before apply) | Ticketing / paging integrations |
 | Compliance, cumulative budget, EOW projection | Dashboards or a UI |
-| SLI types: availability / latency / freshness | |
+| SLI *labels*: availability / latency / freshness | Changing burn-rate math per SLI type |
 
-**Budget vocabulary (important):**
+### Budget vocabulary
 
-- **Burn rate** — instantaneous pace vs sustainable rate (`error_rate / error_budget`).
-- **Rate / budget ratio** — same idea over an observed sample; not calendar progress.
-- **Cumulative budget consumed** — absolute allowance used so far assuming constant RPS: `ratio × (elapsed / window)`.
-- **EOW projection `constant_rate`** (default) — if the observed *rate* continues, end-of-window rate ≈ observed rate (correct for request-based SLIs like checkout availability).
-- **EOW projection `time_pace`** — calendar heuristic `ratio × window/elapsed`; useful for storytelling, easy to misuse on request SLIs.
+| Term | Meaning |
+|------|---------|
+| **Burn rate** | Instantaneous pace vs sustainable rate: `error_rate / error_budget`. `1.0` = exactly on track. |
+| **Rate / budget ratio** | Same idea over an observed sample (`observed_error_rate / error_budget`). **Not** “how far through the calendar month you are.” Prefer this name over the legacy alias `error_budget_consumed_fraction`. |
+| **Cumulative budget consumed** | Absolute allowance used so far assuming constant traffic: `ratio × (elapsed / window)`. |
+| **EOW `constant_rate`** (default) | If the observed *error rate* continues, end-of-window rate ≈ observed rate. Correct for request-based SLIs (e.g. checkout availability). |
+| **EOW `time_pace`** | Calendar heuristic: `ratio × window / elapsed`. Easy to misuse on request SLIs — see worked example below. |
 
-Status thresholds (CRITICAL / WARNING) scale with the compliance window (2% budget in 1h, 5% in 6h). On 30 days that is 14.4× / 6.0×.
+Status thresholds (`CRITICAL` / `WARNING`) scale with the compliance window (2% budget in 1h, 5% in 6h). On a 30-day window that is **14.4×** / **6.0×**.
 
 ## Install
 
 ```bash
-pip install -e ".[dev]"
+pip install -e .          # runtime
+pip install -e ".[dev]"   # + pytest
 ```
 
 ## Usage
@@ -35,11 +53,19 @@ pip install -e ".[dev]"
 ### Burn rate
 
 ```bash
+# From an error rate (0.0–1.0)
 slo-toolkit burn-rate --slo 0.999 --error-rate 0.005
+
+# From good/bad counts (better when volume is low)
 slo-toolkit burn-rate --slo 0.999 --bad 50 --total 10000 --json
+
+# --consumed is cumulative budget already spent (0–1), not the burn rate
+slo-toolkit burn-rate --slo 0.999 --error-rate 0.005 --consumed 0.4
 ```
 
 ### Alert config
+
+Generated rules/monitors are templates — **review before apply** (metric names, runbooks, Datadog formula queries).
 
 ```bash
 slo-toolkit alerts --slo 0.999 --service checkout --env production
@@ -50,9 +76,48 @@ slo-toolkit alerts --slo 0.999 --service checkout --format json   # schema_versi
 
 ### Compliance
 
+`--total` / `--errors` are treated as counts over `--window` days:
+
 ```bash
-slo-toolkit compliance --slo 0.999 --total 1000000 --errors 250 --sli-type availability
+slo-toolkit compliance --slo 0.999 --total 1000000 --errors 250 --window 30 --sli-type availability
 ```
+
+### Worked example: `constant_rate` vs `time_pace`
+
+Same data: **1M requests, 250 errors** (0.025% errors) observed over **7 days** of a **30-day**, 99.9% SLO (allowed error rate 0.1%).
+
+```python
+from datetime import datetime, timedelta, timezone
+from slo_toolkit import (
+    CompliancePeriod,
+    ProjectionMode,
+    SLOComplianceReport,
+)
+
+now = datetime(2026, 1, 31, tzinfo=timezone.utc)
+report = SLOComplianceReport(
+    slo_target=0.999,
+    compliance_window_days=30,
+    periods=[
+        CompliancePeriod(
+            start=now - timedelta(days=7),
+            end=now,
+            total_requests=1_000_000,
+            error_requests=250,
+        )
+    ],
+)
+
+# Prefer this for request-based SLIs (checkout, API availability)
+constant = report.project_end_of_window(7 * 24, ProjectionMode.CONSTANT_RATE)
+# constant.projected_error_rate == 0.00025  → still under 0.001 budget → will_comply True
+
+# Calendar heuristic — same inputs, opposite conclusion
+pace = report.project_end_of_window(7 * 24, ProjectionMode.TIME_PACE)
+# pace scales "how hard we're burning" by 30/7 → projects a breach → will_comply False
+```
+
+If the **error rate** stays at 0.025%, you finish the month compliant. `time_pace` answers a different question (“if this early-window *pace of budget use* continued linearly”) and can scare you incorrectly on request SLIs.
 
 ## Python API
 
@@ -63,12 +128,13 @@ from slo_toolkit import (
     MetricContract,
     ProjectionMode,
     SLIType,
+    SLOComplianceReport,
 )
 
 calc = BurnRateCalculator(
     slo_target=0.999,
     compliance_window_days=30,
-    sli_type=SLIType.AVAILABILITY,
+    sli_type=SLIType.AVAILABILITY,  # label only; math is always good/bad or error-rate
 )
 print(calc.calculate_from_counts(bad_events=25, total_events=100_000))
 
@@ -100,6 +166,7 @@ On shorter compliance windows, long detection windows are **clamped** so they ne
 ## Tests / CI
 
 ```bash
+pip install -e ".[dev]"
 pytest -q
 ```
 
