@@ -58,3 +58,18 @@ def test_burn_rate_for_alert_threshold(calc_99_9):
         budget_fraction=0.02, window_hours=1
     )
     assert pytest.approx(br, rel=1e-3) == 14.4
+
+
+def test_status_thresholds_scale_with_window():
+    """7-day window CRITICAL/WARNING thresholds are not the 30d 14.4x / 6.0x values."""
+    calc = BurnRateCalculator(slo_target=0.999, compliance_window_days=7)
+    assert pytest.approx(calc.critical_burn_rate, rel=1e-3) == 3.36  # 0.02 * 168 / 1
+    assert pytest.approx(calc.warning_burn_rate, rel=1e-3) == 1.4    # 0.05 * 168 / 6
+
+    # 2x is CRITICAL on a 7d window (threshold 3.36 is higher — 2x is only ELEVATED/WARNING)
+    result_elevated = calc.calculate(error_rate=0.001 * 2.0)
+    assert result_elevated.status == "WARNING"  # 2.0 >= 1.4 warning, < 3.36 critical
+
+    result_critical = calc.calculate(error_rate=0.001 * 3.36)
+    assert result_critical.status == "CRITICAL"
+    assert abs(result_critical.burn_rate - 14.4) > 1.0

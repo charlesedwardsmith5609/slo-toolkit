@@ -22,12 +22,12 @@ class BurnRateResult:
     """Result of a burn rate calculation."""
     error_rate: float          # Observed error rate (0.0–1.0)
     slo_target: float          # SLO target (e.g. 0.999 = 99.9%)
-    error_budget: float        # Remaining error budget (0.0–1.0)
+    error_budget: float        # Allowed error budget for the SLO (1 - target)
     burn_rate: float           # Current burn rate (1.0 = sustainable)
     time_to_exhaustion_hours: Optional[float]  # Hours until budget exhausted
     compliance_window_hours: float             # SLO compliance window
     budget_remaining_pct: float               # % of budget remaining
-    status: str                               # OK / WARNING / CRITICAL / EXHAUSTED
+    status: str                               # OK / ELEVATED / WARNING / CRITICAL / EXHAUSTED
 
     def __str__(self) -> str:
         tte = (
@@ -59,12 +59,18 @@ class BurnRateCalculator:
     ) -> None:
         if not 0 < slo_target < 1:
             raise ValueError("slo_target must be between 0 and 1 exclusive")
+        if compliance_window_days <= 0:
+            raise ValueError("compliance_window_days must be positive")
         self.slo_target = slo_target
         self.compliance_window_hours = compliance_window_days * 24
         # Allowed error budget = 1 - SLO target.
         # Round to cancel binary float noise (e.g. 1.0 - 0.999 → 0.0010000000000000009),
         # which otherwise makes a 1x burn rate compare as slightly under 1.0.
         self.error_budget = round(1.0 - slo_target, 12)
+        # Status thresholds scale with the compliance window (same formulas as
+        # multi-window alerts: 2% budget in 1h → CRITICAL, 5% in 6h → WARNING).
+        self.critical_burn_rate = self.burn_rate_for_alert_threshold(0.02, 1)
+        self.warning_burn_rate = self.burn_rate_for_alert_threshold(0.05, 6)
 
     def calculate(
         self,
@@ -109,14 +115,14 @@ class BurnRateCalculator:
         else:
             time_to_exhaustion = 0.0
 
-        # Status thresholds (Google SRE multi-window defaults)
+        # Status thresholds scale with compliance window length
         if budget_remaining <= 0:
             status = "EXHAUSTED"
-        elif burn_rate >= 14.4:   # Exhausts 2% of 30d budget in 1h
+        elif burn_rate >= self.critical_burn_rate:
             status = "CRITICAL"
-        elif burn_rate >= 6.0:    # Exhausts 5% of 30d budget in 6h
+        elif burn_rate >= self.warning_burn_rate:
             status = "WARNING"
-        elif burn_rate >= 1.0:    # Burning faster than sustainable
+        elif burn_rate >= 1.0:
             status = "ELEVATED"
         else:
             status = "OK"
@@ -151,4 +157,6 @@ class BurnRateCalculator:
         Returns:
             Burn rate threshold as a float.
         """
+        if window_hours <= 0:
+            raise ValueError("window_hours must be positive")
         return (budget_fraction * self.compliance_window_hours) / window_hours

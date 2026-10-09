@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "slo-toolkit"
@@ -16,6 +16,10 @@ dev = ["pytest>=7", "pytest-cov"]
 
 [project.scripts]
 slo-toolkit = "slo_toolkit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["slo_toolkit*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

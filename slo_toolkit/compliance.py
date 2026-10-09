@@ -17,6 +17,16 @@ class CompliancePeriod:
     total_requests: int
     error_requests: int
 
+    def __post_init__(self) -> None:
+        if self.total_requests < 0:
+            raise ValueError("total_requests must be non-negative")
+        if self.error_requests < 0:
+            raise ValueError("error_requests must be non-negative")
+        if self.error_requests > self.total_requests:
+            raise ValueError("error_requests cannot exceed total_requests")
+        if self.end < self.start:
+            raise ValueError("end must be >= start")
+
     @property
     def error_rate(self) -> float:
         return self.error_requests / self.total_requests if self.total_requests > 0 else 0.0
@@ -40,7 +50,11 @@ class SLOComplianceReport:
     periods: List[CompliancePeriod]
 
     def __post_init__(self) -> None:
-        self._error_budget = 1.0 - self.slo_target
+        if not 0 < self.slo_target < 1:
+            raise ValueError("slo_target must be between 0 and 1 exclusive")
+        if self.compliance_window_days <= 0:
+            raise ValueError("compliance_window_days must be positive")
+        self._error_budget = round(1.0 - self.slo_target, 12)
 
     # ── Core metrics ─────────────────────────────────────────────────────────
 
@@ -77,7 +91,11 @@ class SLOComplianceReport:
     ) -> Tuple[float, bool]:
         """
         Project whether the SLO will be met at end of compliance window
-        if current error rate continues.
+        if the observed error rate so far continues for the remaining time.
+
+        Uses a request-weighted blend: errors so far plus expected errors over
+        the remaining hours at the current observed rate (assuming constant
+        request volume).
 
         Args:
             hours_elapsed: Hours elapsed in the compliance window so far.
@@ -85,16 +103,36 @@ class SLOComplianceReport:
         Returns:
             (projected_error_rate, will_comply)
         """
-        total_hours = self.compliance_window_days * 24
-        # Assume current rate continues for remainder of window
-        projected_rate = self.observed_error_rate  # simplified: rate is constant
-        will_comply = projected_rate <= self._error_budget
+        if hours_elapsed < 0:
+            raise ValueError("hours_elapsed must be non-negative")
+
+        total_hours = float(self.compliance_window_days * 24)
+        if self.total_requests == 0:
+            return 0.0, True
+
+        # Fully elapsed (or beyond): projection equals observation.
+        if hours_elapsed >= total_hours:
+            projected_rate = self.observed_error_rate
+            return projected_rate, projected_rate <= self._error_budget
+
+        if hours_elapsed == 0:
+            # No elapsed time yet — cannot extrapolate; use observed rate as-is.
+            projected_rate = self.observed_error_rate
+            return projected_rate, projected_rate <= self._error_budget
+
+        # Extrapolate budget consumption if the current pace continues for the
+        # full window: consumed_so_far * (window / elapsed).
+        projected_consumed = self.error_budget_consumed_fraction * (
+            total_hours / hours_elapsed
+        )
+        projected_rate = projected_consumed * self._error_budget
+        will_comply = projected_consumed <= 1.0
         return projected_rate, will_comply
 
     # ── Reporting ─────────────────────────────────────────────────────────────
 
     def summary(self) -> str:
-        status = "✅ COMPLIANT" if self.compliant else "❌ BREACHED"
+        status = "COMPLIANT" if self.compliant else "BREACHED"
         lines = [
             f"SLO Compliance Report",
             f"{'─' * 40}",

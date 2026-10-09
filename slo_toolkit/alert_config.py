@@ -6,8 +6,7 @@ Implements the Google SRE Book Chapter 5 multi-window alerting strategy:
   - Long window guards against false positives from short spikes
   - Both windows must trigger simultaneously for an alert to fire
 
-Outputs configuration for common platforms: PagerDuty (via Prometheus),
-Chronosphere, Datadog, and generic JSON.
+Outputs configuration for Prometheus, Datadog, and generic JSON.
 """
 
 from __future__ import annotations
@@ -38,6 +37,10 @@ class AlertConfig:
     slo_target: float
     compliance_window_days: int
     windows: List[AlertWindow] = field(default_factory=list)
+
+    @property
+    def error_budget(self) -> float:
+        return round(1.0 - self.slo_target, 12)
 
     def to_json(self, indent: int = 2) -> str:
         """Serialize to JSON for storage or API submission."""
@@ -76,6 +79,7 @@ class AlertConfig:
             'rate({metric}{{status="error"}}[{window}]) / '
             'rate({metric}[{window}])'
         )
+        budget = self.error_budget
         for w in self.windows:
             short_expr = error_rate_template.format(
                 metric=metric_name, window=f"{int(w.short_window_hours)}h"
@@ -83,7 +87,6 @@ class AlertConfig:
             long_expr = error_rate_template.format(
                 metric=metric_name, window=f"{int(w.long_window_hours)}h"
             )
-            budget = 1.0 - self.slo_target
             lines += [
                 f"      - alert: SLO{w.name.replace(' ', '')}BurnRate",
                 f"        expr: >",
@@ -101,20 +104,45 @@ class AlertConfig:
         return "\n".join(lines)
 
     def to_datadog_monitors(self) -> str:
-        """Emit Datadog monitor definitions as JSON (one per window)."""
+        """
+        Emit Datadog monitor definitions as JSON (one per window).
+
+        Each monitor requires BOTH the short and long windows to exceed the
+        burn-rate-derived error-rate threshold (same dual-window intent as
+        the Prometheus rules).
+        """
         monitors = []
         for w in self.windows:
+            error_rate_threshold = self.error_budget * w.burn_rate
+            short_h = int(w.short_window_hours)
+            long_h = int(w.long_window_hours)
+            short_q = (
+                f"sum(last_{short_h}h):sum:requests.errors{{}}.as_count() / "
+                f"sum(last_{short_h}h):sum:requests.total{{}}.as_count()"
+            )
+            long_q = (
+                f"sum(last_{long_h}h):sum:requests.errors{{}}.as_count() / "
+                f"sum(last_{long_h}h):sum:requests.total{{}}.as_count()"
+            )
             monitors.append({
                 "name": f"[SLO] {self.service} — {w.name}",
                 "type": "query alert",
                 "query": (
-                    f"(sum(last_{int(w.short_window_hours)}h):sum:requests.errors{{}}.as_count() / "
-                    f"sum(last_{int(w.short_window_hours)}h):sum:requests.total{{}}.as_count()) "
-                    f"> {(1 - self.slo_target) * w.burn_rate:.6f}"
+                    f"({short_q}) > {error_rate_threshold:.6f} "
+                    f"and ({long_q}) > {error_rate_threshold:.6f}"
                 ),
                 "message": f"{w.description} @pagerduty-{w.severity}",
-                "tags": [f"service:{self.service}", f"slo:{self.slo_name}", f"severity:{w.severity}"],
+                "tags": [
+                    f"service:{self.service}",
+                    f"slo:{self.slo_name}",
+                    f"severity:{w.severity}",
+                ],
                 "priority": 1 if w.severity == "page" else 3,
+                "options": {
+                    "thresholds": {"critical": error_rate_threshold},
+                    "short_window_hours": short_h,
+                    "long_window_hours": long_h,
+                },
             })
         return json.dumps(monitors, indent=2)
 

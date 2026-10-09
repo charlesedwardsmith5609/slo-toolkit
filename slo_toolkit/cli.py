@@ -13,14 +13,17 @@ Usage examples:
   slo-toolkit compliance --slo 0.999 --total 1000000 --errors 250
 """
 
+from __future__ import annotations
+
 import argparse
-import sys
 import json
+import datetime
+import sys
+from typing import List, Optional
 
 from .burn_rate import BurnRateCalculator
 from .alert_config import AlertConfigGenerator
 from .compliance import SLOComplianceReport, CompliancePeriod
-import datetime
 
 
 def cmd_burn_rate(args: argparse.Namespace) -> None:
@@ -70,7 +73,14 @@ def cmd_alerts(args: argparse.Namespace) -> None:
 
 
 def cmd_compliance(args: argparse.Namespace) -> None:
-    now = datetime.datetime.utcnow()
+    if args.errors > args.total:
+        print("error: --errors cannot exceed --total", file=sys.stderr)
+        sys.exit(2)
+    if args.total < 0 or args.errors < 0:
+        print("error: --total and --errors must be non-negative", file=sys.stderr)
+        sys.exit(2)
+
+    now = datetime.datetime.now(datetime.timezone.utc)
     period = CompliancePeriod(
         start=now - datetime.timedelta(days=args.window),
         end=now,
@@ -93,7 +103,7 @@ def cmd_compliance(args: argparse.Namespace) -> None:
         print(report.summary())
 
 
-def main() -> None:
+def main(argv: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(
         prog="slo-toolkit",
         description="SLO burn rate calculator and alert config generator",
@@ -133,7 +143,7 @@ def main() -> None:
     co.add_argument("--json", action="store_true", help="Output as JSON")
     co.set_defaults(func=cmd_compliance)
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     args.func(args)
 
 
