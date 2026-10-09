@@ -61,8 +61,10 @@ class BurnRateCalculator:
             raise ValueError("slo_target must be between 0 and 1 exclusive")
         self.slo_target = slo_target
         self.compliance_window_hours = compliance_window_days * 24
-        # Allowed error budget = 1 - SLO target
-        self.error_budget = 1.0 - slo_target
+        # Allowed error budget = 1 - SLO target.
+        # Round to cancel binary float noise (e.g. 1.0 - 0.999 → 0.0010000000000000009),
+        # which otherwise makes a 1x burn rate compare as slightly under 1.0.
+        self.error_budget = round(1.0 - slo_target, 12)
 
     def calculate(
         self,

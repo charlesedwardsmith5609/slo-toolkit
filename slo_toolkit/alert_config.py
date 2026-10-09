@@ -70,13 +70,19 @@ class AlertConfig:
             f"  - name: slo.{self.service}.{self.slo_name}",
             "    rules:",
         ]
-        error_rate_expr = (
-            f'rate({metric_name}{{status="error"}}[{{window}}]) / '
-            f'rate({metric_name}[{{window}}])'
+        # Use str.format with doubled braces so Prometheus label selectors
+        # like {status="error"} are not treated as format fields.
+        error_rate_template = (
+            'rate({metric}{{status="error"}}[{window}]) / '
+            'rate({metric}[{window}])'
         )
         for w in self.windows:
-            short_expr = error_rate_expr.format(window=f"{int(w.short_window_hours)}h")
-            long_expr  = error_rate_expr.format(window=f"{int(w.long_window_hours)}h")
+            short_expr = error_rate_template.format(
+                metric=metric_name, window=f"{int(w.short_window_hours)}h"
+            )
+            long_expr = error_rate_template.format(
+                metric=metric_name, window=f"{int(w.long_window_hours)}h"
+            )
             budget = 1.0 - self.slo_target
             lines += [
                 f"      - alert: SLO{w.name.replace(' ', '')}BurnRate",
