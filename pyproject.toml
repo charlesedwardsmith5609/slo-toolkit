@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "slo-toolkit"
-version = "0.1.0"
+version = "0.2.0"
 description = "SLO burn rate calculator, multi-window alert config generator, and compliance reporter"
 readme = "README.md"
 license = {text = "MIT"}

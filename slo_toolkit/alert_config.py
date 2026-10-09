@@ -6,212 +6,352 @@ Implements the Google SRE Book Chapter 5 multi-window alerting strategy:
   - Long window guards against false positives from short spikes
   - Both windows must trigger simultaneously for an alert to fire
 
-Outputs configuration for Prometheus, Datadog, and generic JSON.
+Outputs versioned JSON plus Prometheus and Datadog exporters.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import List, Optional
+
 import json
+import re
+from dataclasses import dataclass, field
+from typing import List, Optional, Sequence, Tuple, Union
 
 from .burn_rate import BurnRateCalculator
+from .types import (
+    ALERT_CONFIG_SCHEMA_VERSION,
+    AlertSeverity,
+    SLIType,
+)
+
+
+@dataclass(frozen=True)
+class MetricContract:
+    """
+    Label/metric contract for generated alerts.
+
+    Prometheus assumes a single counter with an error classifier label.
+    Datadog assumes separate error and total metrics (counts).
+    """
+
+    prometheus_metric: str = "http_requests_total"
+    prometheus_error_selector: str = 'status="error"'
+    datadog_errors_metric: str = "requests.errors"
+    datadog_total_metric: str = "requests.total"
+    environment: str = "production"
+
+    def prom_error_rate(self, window: str) -> str:
+        # window like "1h"
+        return (
+            f"rate({self.prometheus_metric}{{{self.prometheus_error_selector}}}[{window}])"
+            f" / rate({self.prometheus_metric}[{window}])"
+        )
+
+
+# Reference multi-window thresholds for a 30-day compliance window.
+# Detection hours are absolute; burn rates scale via BurnRateCalculator.
+# Long windows are clamped to the compliance window at generate time.
+_REF_WINDOWS_30D: Sequence[Tuple[str, float, float, float, AlertSeverity]] = (
+    ("Critical Fast Burn", 2, 1, 5, AlertSeverity.PAGE),
+    ("High Slow Burn", 5, 6, 30, AlertSeverity.PAGE),
+    ("Medium Burn", 10, 24, 72, AlertSeverity.TICKET),
+    ("Low Burn", 10, 72, 168, AlertSeverity.INFO),
+)
 
 
 @dataclass
 class AlertWindow:
     """A single burn rate alert window."""
+
     name: str
     short_window_hours: float
     long_window_hours: float
-    budget_fraction: float         # Fraction of budget consumed to trigger
-    burn_rate: float               # Derived burn rate threshold
-    severity: str                  # page / ticket / info
+    budget_fraction: float
+    burn_rate: float
+    severity: AlertSeverity
     description: str
+    pending_for: str = "2m"
 
 
 @dataclass
 class AlertConfig:
     """Complete multi-window alert configuration for an SLO."""
+
     service: str
     slo_name: str
     slo_target: float
     compliance_window_days: int
+    sli_type: SLIType = SLIType.AVAILABILITY
+    environment: str = "production"
+    metric_contract: MetricContract = field(default_factory=MetricContract)
     windows: List[AlertWindow] = field(default_factory=list)
+    schema_version: str = ALERT_CONFIG_SCHEMA_VERSION
 
     @property
     def error_budget(self) -> float:
         return round(1.0 - self.slo_target, 12)
 
-    def to_json(self, indent: int = 2) -> str:
-        """Serialize to JSON for storage or API submission."""
-        return json.dumps({
+    def to_dict(self) -> dict:
+        """Versioned structured config (source of truth for exporters)."""
+        return {
+            "schema_version": self.schema_version,
             "service": self.service,
             "slo_name": self.slo_name,
+            "sli_type": self.sli_type.value,
             "slo_target": self.slo_target,
+            "error_budget": self.error_budget,
             "compliance_window_days": self.compliance_window_days,
+            "environment": self.environment,
+            "metric_contract": {
+                "prometheus_metric": self.metric_contract.prometheus_metric,
+                "prometheus_error_selector": self.metric_contract.prometheus_error_selector,
+                "datadog_errors_metric": self.metric_contract.datadog_errors_metric,
+                "datadog_total_metric": self.metric_contract.datadog_total_metric,
+                "environment": self.metric_contract.environment,
+            },
             "alert_windows": [
                 {
                     "name": w.name,
                     "short_window_hours": w.short_window_hours,
                     "long_window_hours": w.long_window_hours,
                     "budget_fraction_consumed": w.budget_fraction,
-                    "burn_rate_threshold": round(w.burn_rate, 2),
-                    "severity": w.severity,
+                    "burn_rate_threshold": round(w.burn_rate, 4),
+                    "severity": w.severity.value,
+                    "pending_for": w.pending_for,
                     "description": w.description,
                 }
                 for w in self.windows
             ],
-        }, indent=indent)
+        }
 
-    def to_prometheus_rules(self, metric_name: str = "request_errors_total") -> str:
+    def to_json(self, indent: int = 2) -> str:
+        return json.dumps(self.to_dict(), indent=indent)
+
+    @staticmethod
+    def _alert_id(name: str) -> str:
+        return re.sub(r"[^A-Za-z0-9_]", "", name.replace(" ", ""))
+
+    def to_prometheus_rules(self) -> str:
         """
-        Emit Prometheus alerting rules (YAML) for this SLO.
-        Assumes a metric `{metric_name}` with labels `{status="error"}`.
+        Emit Prometheus recording + alerting rules (YAML) for this SLO.
+
+        Dual-window: short AND long burn must exceed threshold.
+        Includes a `for:` pending duration to reduce flapping.
         """
+        mc = self.metric_contract
+        group = f"slo.{self.service}.{self.slo_name}"
         lines = [
+            "# Generated by slo-toolkit — review before applying",
+            f"# schema_version: {self.schema_version}",
             "groups:",
-            f"  - name: slo.{self.service}.{self.slo_name}",
+            f"  - name: {group}",
             "    rules:",
         ]
-        # Use str.format with doubled braces so Prometheus label selectors
-        # like {status="error"} are not treated as format fields.
-        error_rate_template = (
-            'rate({metric}{{status="error"}}[{window}]) / '
-            'rate({metric}[{window}])'
+
+        # Recording rules for error rate at common windows used by alerts
+        windows_needed = sorted(
+            {
+                int(h)
+                for w in self.windows
+                for h in (w.short_window_hours, w.long_window_hours)
+            }
         )
-        budget = self.error_budget
-        for w in self.windows:
-            short_expr = error_rate_template.format(
-                metric=metric_name, window=f"{int(w.short_window_hours)}h"
-            )
-            long_expr = error_rate_template.format(
-                metric=metric_name, window=f"{int(w.long_window_hours)}h"
-            )
+        for hours in windows_needed:
+            win = f"{hours}h"
             lines += [
-                f"      - alert: SLO{w.name.replace(' ', '')}BurnRate",
+                f"      - record: slo:burn_rate:ratio_{hours}h",
                 f"        expr: >",
-                f"          ({short_expr} / {budget}) > {w.burn_rate:.2f}",
-                f"          and",
-                f"          ({long_expr} / {budget}) > {w.burn_rate:.2f}",
+                f"          ({mc.prom_error_rate(win)}) / {self.error_budget}",
                 f"        labels:",
-                f"          severity: {w.severity}",
                 f"          service: {self.service}",
                 f"          slo: {self.slo_name}",
+                f"          sli_type: {self.sli_type.value}",
+                f"          env: {self.environment}",
+            ]
+
+        for w in self.windows:
+            short_h = int(w.short_window_hours)
+            long_h = int(w.long_window_hours)
+            alert = f"SLO{self._alert_id(w.name)}BurnRate"
+            lines += [
+                f"      - alert: {alert}",
+                f"        expr: >",
+                f"          slo:burn_rate:ratio_{short_h}h > {w.burn_rate:.4f}",
+                f"          and",
+                f"          slo:burn_rate:ratio_{long_h}h > {w.burn_rate:.4f}",
+                f"        for: {w.pending_for}",
+                f"        labels:",
+                f"          severity: {w.severity.value}",
+                f"          service: {self.service}",
+                f"          slo: {self.slo_name}",
+                f"          sli_type: {self.sli_type.value}",
+                f"          env: {self.environment}",
                 f"        annotations:",
                 f"          summary: '{w.description}'",
-                f"          runbook: 'https://runbooks.internal/{self.service}/slo'",
+                f"          runbook: 'https://runbooks.internal/{self.service}/slo/{self.slo_name}'",
             ]
         return "\n".join(lines)
 
     def to_datadog_monitors(self) -> str:
         """
-        Emit Datadog monitor definitions as JSON (one per window).
+        Emit Datadog monitor definitions as JSON.
 
-        Each monitor requires BOTH the short and long windows to exceed the
-        burn-rate-derived error-rate threshold (same dual-window intent as
-        the Prometheus rules).
+        Uses formula monitors so BOTH short and long windows must exceed the
+        error-rate threshold (composite intent that applies cleanly via API).
+        Review queries against your actual metric names before apply.
         """
+        mc = self.metric_contract
+        env = self.environment
         monitors = []
         for w in self.windows:
-            error_rate_threshold = self.error_budget * w.burn_rate
+            thresh = self.error_budget * w.burn_rate
             short_h = int(w.short_window_hours)
             long_h = int(w.long_window_hours)
             short_q = (
-                f"sum(last_{short_h}h):sum:requests.errors{{}}.as_count() / "
-                f"sum(last_{short_h}h):sum:requests.total{{}}.as_count()"
+                f"sum(last_{short_h}h):sum:{mc.datadog_errors_metric}{{env:{env}}}.as_count() / "
+                f"sum(last_{short_h}h):sum:{mc.datadog_total_metric}{{env:{env}}}.as_count()"
             )
             long_q = (
-                f"sum(last_{long_h}h):sum:requests.errors{{}}.as_count() / "
-                f"sum(last_{long_h}h):sum:requests.total{{}}.as_count()"
+                f"sum(last_{long_h}h):sum:{mc.datadog_errors_metric}{{env:{env}}}.as_count() / "
+                f"sum(last_{long_h}h):sum:{mc.datadog_total_metric}{{env:{env}}}.as_count()"
             )
-            monitors.append({
-                "name": f"[SLO] {self.service} — {w.name}",
-                "type": "query alert",
-                "query": (
-                    f"({short_q}) > {error_rate_threshold:.6f} "
-                    f"and ({long_q}) > {error_rate_threshold:.6f}"
-                ),
-                "message": f"{w.description} @pagerduty-{w.severity}",
-                "tags": [
-                    f"service:{self.service}",
-                    f"slo:{self.slo_name}",
-                    f"severity:{w.severity}",
-                ],
-                "priority": 1 if w.severity == "page" else 3,
-                "options": {
-                    "thresholds": {"critical": error_rate_threshold},
-                    "short_window_hours": short_h,
-                    "long_window_hours": long_h,
-                },
-            })
+            monitors.append(
+                {
+                    "name": f"[SLO][{env}] {self.service} — {w.name}",
+                    "type": "query alert",
+                    "query": (
+                        f"formula(\"(query1 > {thresh:.8f}) && "
+                        f"(query2 > {thresh:.8f})\").last(\"{w.pending_for}\") > 0"
+                    ),
+                    "message": (
+                        f"{w.description}\n"
+                        f"SLI: {self.sli_type.value} env:{env} "
+                        f"@pagerduty-{w.severity.value}"
+                    ),
+                    "tags": [
+                        f"service:{self.service}",
+                        f"slo:{self.slo_name}",
+                        f"sli_type:{self.sli_type.value}",
+                        f"severity:{w.severity.value}",
+                        f"env:{env}",
+                        f"schema_version:{self.schema_version}",
+                    ],
+                    "priority": 1 if w.severity is AlertSeverity.PAGE else 3,
+                    "options": {
+                        "thresholds": {"critical": 0},
+                        "notify_no_data": False,
+                        "require_full_window": True,
+                        "variables": [
+                            {
+                                "data_source": "metrics",
+                                "name": "query1",
+                                "query": short_q,
+                            },
+                            {
+                                "data_source": "metrics",
+                                "name": "query2",
+                                "query": long_q,
+                            },
+                        ],
+                        "short_window_hours": short_h,
+                        "long_window_hours": long_h,
+                        "error_rate_threshold": thresh,
+                    },
+                }
+            )
         return json.dumps(monitors, indent=2)
 
 
 class AlertConfigGenerator:
-    """
-    Generate multi-window burn rate alert configurations for an SLO.
-
-    Args:
-        calculator: A configured BurnRateCalculator instance.
-    """
-
-    # Google SRE Book recommended multi-window thresholds for 30-day windows
-    DEFAULT_WINDOWS = [
-        # (name, budget_pct, short_hours, long_hours, severity)
-        ("Critical Fast Burn",  2,  1,   5,  "page"),
-        ("High Slow Burn",      5,  6,  30,  "page"),
-        ("Medium Burn",        10, 24,  72,  "ticket"),
-        ("Low Burn",           10, 72, 168,  "info"),
-    ]
+    """Generate multi-window burn rate alert configurations for an SLO."""
 
     def __init__(self, calculator: BurnRateCalculator) -> None:
         self.calculator = calculator
+
+    def _scaled_window_specs(
+        self,
+        custom_windows: Optional[list],
+    ) -> List[Tuple[str, float, float, float, AlertSeverity]]:
+        if custom_windows is not None:
+            out = []
+            for name, budget_pct, short_h, long_h, severity in custom_windows:
+                out.append(
+                    (
+                        name,
+                        float(budget_pct),
+                        float(short_h),
+                        float(long_h),
+                        AlertSeverity(severity) if not isinstance(severity, AlertSeverity) else severity,
+                    )
+                )
+            return out
+
+        compliance_h = float(self.calculator.compliance_window_hours)
+        specs = []
+        for name, budget_pct, short_h, long_h, severity in _REF_WINDOWS_30D:
+            short = min(float(short_h), compliance_h)
+            long = min(float(long_h), compliance_h)
+            if long < short:
+                long = short
+            # Skip windows that collapse to zero-width after clamping.
+            if short <= 0:
+                continue
+            specs.append((name, float(budget_pct), short, long, severity))
+        return specs
 
     def generate(
         self,
         service: str,
         slo_name: str,
         custom_windows: Optional[list] = None,
+        *,
+        environment: str = "production",
+        metric_contract: Optional[MetricContract] = None,
+        pending_for: str = "2m",
     ) -> AlertConfig:
         """
         Generate a complete AlertConfig for the given service/SLO.
 
-        Args:
-            service:        Service name (used in alert labels)
-            slo_name:       Human-readable SLO name
-            custom_windows: Optional list of (name, budget_pct, short_h, long_h, severity)
-                            tuples to override defaults.
-
-        Returns:
-            AlertConfig with all windows populated.
+        Detection windows from the 30d reference set are clamped so they never
+        exceed the calculator's compliance window (e.g. 168h long window on a
+        7d SLO becomes 168h→168 capped to 7d).
         """
-        windows_spec = custom_windows or self.DEFAULT_WINDOWS
-        windows = []
+        contract = metric_contract or MetricContract(environment=environment)
 
-        for name, budget_pct, short_h, long_h, severity in windows_spec:
+        windows: List[AlertWindow] = []
+        for name, budget_pct, short_h, long_h, severity in self._scaled_window_specs(
+            custom_windows
+        ):
             budget_fraction = budget_pct / 100.0
             burn_rate = self.calculator.burn_rate_for_alert_threshold(
                 budget_fraction=budget_fraction,
                 window_hours=short_h,
             )
-            windows.append(AlertWindow(
-                name=name,
-                short_window_hours=short_h,
-                long_window_hours=long_h,
-                budget_fraction=budget_fraction,
-                burn_rate=burn_rate,
-                severity=severity,
-                description=(
-                    f"{service} SLO '{slo_name}' is burning {budget_pct}% of its "
-                    f"{self.calculator.compliance_window_hours // 24:.0f}d error budget "
-                    f"in {short_h}h (burn rate ≥{burn_rate:.1f}x)"
-                ),
-            ))
+            windows.append(
+                AlertWindow(
+                    name=name,
+                    short_window_hours=short_h,
+                    long_window_hours=long_h,
+                    budget_fraction=budget_fraction,
+                    burn_rate=burn_rate,
+                    severity=severity,
+                    pending_for=pending_for,
+                    description=(
+                        f"{service} SLO '{slo_name}' ({self.calculator.sli_type.value}) "
+                        f"is burning {budget_pct:g}% of its "
+                        f"{self.calculator.compliance_window_days}d error budget "
+                        f"in {short_h:g}h (burn rate ≥{burn_rate:.1f}x) "
+                        f"[env={environment}]"
+                    ),
+                )
+            )
 
         return AlertConfig(
             service=service,
             slo_name=slo_name,
             slo_target=self.calculator.slo_target,
-            compliance_window_days=int(self.calculator.compliance_window_hours // 24),
+            compliance_window_days=self.calculator.compliance_window_days,
+            sli_type=self.calculator.sli_type,
+            environment=environment,
+            metric_contract=contract,
             windows=windows,
         )
