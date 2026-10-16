@@ -1,0 +1,20 @@
+# Local scratch — never commit.
+*.local.md
+commit-message.local.txt
+
+# Python bytecode / build artifacts
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+.env
+*.egg
