@@ -17,7 +17,6 @@ import argparse
 import datetime
 import json
 import sys
-from typing import List, Optional
 
 from .alert_config import AlertConfigGenerator, MetricContract
 from .burn_rate import BurnRateCalculator
@@ -29,7 +28,7 @@ def cmd_burn_rate(args: argparse.Namespace) -> None:
     calc = BurnRateCalculator(
         slo_target=args.slo,
         compliance_window_days=args.window,
-        sli_type=args.sli_type,
+        sli_type=SLIType(args.sli_type),
     )
     if args.bad is not None or args.total is not None:
         if args.bad is None or args.total is None:
@@ -79,7 +78,7 @@ def cmd_alerts(args: argparse.Namespace) -> None:
     calc = BurnRateCalculator(
         slo_target=args.slo,
         compliance_window_days=args.window,
-        sli_type=args.sli_type,
+        sli_type=SLIType(args.sli_type),
     )
     contract = MetricContract(
         prometheus_metric=args.metric,
@@ -127,7 +126,7 @@ def cmd_compliance(args: argparse.Namespace) -> None:
         slo_target=args.slo,
         compliance_window_days=args.window,
         periods=[period],
-        sli_type=args.sli_type,
+        sli_type=SLIType(args.sli_type),
     )
     if args.json:
         hours = float(args.window * 24)
@@ -150,7 +149,7 @@ def cmd_compliance(args: argparse.Namespace) -> None:
         print(report.summary())
 
 
-def main(argv: Optional[List[str]] = None) -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="slo-toolkit",
         description="SLO burn rate calculator and alert config generator",

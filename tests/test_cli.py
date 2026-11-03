@@ -2,7 +2,6 @@
 import json
 
 import pytest
-
 from slo_toolkit.cli import main
 from slo_toolkit.types import BurnRateStatus
 

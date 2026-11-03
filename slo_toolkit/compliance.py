@@ -7,10 +7,18 @@ from __future__ import annotations
 
 import datetime
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from typing import TypedDict
 
 from .burn_rate import BurnRateCalculator, BurnRateResult
 from .types import BurnRateStatus, ProjectionMode, SLIType
+
+
+class PrometheusSample(TypedDict):
+    """Cumulative counter sample used by from_prometheus_samples."""
+
+    timestamp: datetime.datetime
+    total: int
+    errors: int
 
 
 @dataclass
@@ -71,8 +79,8 @@ class SLOComplianceReport:
 
     slo_target: float
     compliance_window_days: int
-    periods: List[CompliancePeriod]
-    sli_type: Union[SLIType, str] = SLIType.AVAILABILITY
+    periods: list[CompliancePeriod]
+    sli_type: SLIType = SLIType.AVAILABILITY
 
     def __post_init__(self) -> None:
         if not 0 < self.slo_target < 1:
@@ -159,7 +167,7 @@ class SLOComplianceReport:
     def project_end_of_window(
         self,
         hours_elapsed: float,
-        mode: Union[ProjectionMode, str] = ProjectionMode.CONSTANT_RATE,
+        mode: ProjectionMode | str = ProjectionMode.CONSTANT_RATE,
     ) -> WindowProjection:
         """
         Project end-of-window error rate and compliance.
@@ -216,7 +224,7 @@ class SLOComplianceReport:
             hours_elapsed=hours_elapsed,
         )
 
-    def period_burn_rates(self) -> List[Tuple[CompliancePeriod, BurnRateResult]]:
+    def period_burn_rates(self) -> list[tuple[CompliancePeriod, BurnRateResult]]:
         """Burn rate for each period (for hotspot analysis)."""
         results = []
         for period in self.periods:
@@ -229,7 +237,7 @@ class SLOComplianceReport:
 
     def highest_severity_period(
         self,
-    ) -> Optional[Tuple[CompliancePeriod, BurnRateResult]]:
+    ) -> tuple[CompliancePeriod, BurnRateResult] | None:
         """Period with the worst burn-rate status, then highest burn_rate."""
         order = {
             BurnRateStatus.EXHAUSTED: 5,
@@ -286,9 +294,9 @@ class SLOComplianceReport:
         cls,
         slo_target: float,
         compliance_window_days: int,
-        samples: List[dict],
-        sli_type: Union[SLIType, str] = SLIType.AVAILABILITY,
-    ) -> "SLOComplianceReport":
+        samples: list[PrometheusSample],
+        sli_type: SLIType | str = SLIType.AVAILABILITY,
+    ) -> SLOComplianceReport:
         """
         Build a report from cumulative counter samples.
 
@@ -303,10 +311,6 @@ class SLOComplianceReport:
             if i == 0:
                 continue
             prev = samples[i - 1]
-            for key in ("timestamp", "total", "errors"):
-                if key not in s or key not in prev:
-                    raise ValueError(f"sample missing required key: {key}")
-
             total_delta = s["total"] - prev["total"]
             error_delta = s["errors"] - prev["errors"]
             if total_delta < 0 or error_delta < 0:
@@ -327,5 +331,5 @@ class SLOComplianceReport:
             slo_target=slo_target,
             compliance_window_days=compliance_window_days,
             periods=periods,
-            sli_type=sli_type,
+            sli_type=SLIType(sli_type),
         )

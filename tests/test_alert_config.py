@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from slo_toolkit.alert_config import AlertConfigGenerator, MetricContract
 from slo_toolkit.burn_rate import BurnRateCalculator
 from slo_toolkit.types import ALERT_CONFIG_SCHEMA_VERSION, SLIType

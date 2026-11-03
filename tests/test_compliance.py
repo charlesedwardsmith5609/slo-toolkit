@@ -2,10 +2,8 @@
 import datetime
 
 import pytest
-
 from slo_toolkit.compliance import CompliancePeriod, SLOComplianceReport
 from slo_toolkit.types import BurnRateStatus, ProjectionMode, SLIType
-
 
 UTC = datetime.timezone.utc
 

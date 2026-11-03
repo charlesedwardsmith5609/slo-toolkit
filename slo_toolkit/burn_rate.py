@@ -15,7 +15,6 @@ Multi-window burn rate alerting (Google SRE Workbook, Alerting on SLOs):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Union
 
 from .types import BurnRateStatus, SLIType
 
@@ -28,15 +27,15 @@ class BurnRateResult:
     slo_target: float  # SLO target (e.g. 0.999 = 99.9%)
     error_budget: float  # Allowed error budget for the SLO (1 - target)
     burn_rate: float  # Current burn rate (1.0 = sustainable)
-    time_to_exhaustion_hours: Optional[float]  # Hours until budget exhausted
+    time_to_exhaustion_hours: float | None  # Hours until budget exhausted
     compliance_window_hours: float  # SLO compliance window
     # Remaining % of caller-supplied cumulative budget (1 - budget_consumed_fraction).
     # Default calculate() passes consumed=0 → this shows 100%, not "month left."
     budget_remaining_pct: float
     status: BurnRateStatus
     sli_type: SLIType = SLIType.AVAILABILITY
-    bad_events: Optional[int] = None
-    total_events: Optional[int] = None
+    bad_events: int | None = None
+    total_events: int | None = None
 
     def __str__(self) -> str:
         tte = (
@@ -66,7 +65,7 @@ class BurnRateCalculator:
         self,
         slo_target: float = 0.999,
         compliance_window_days: int = 30,
-        sli_type: Union[SLIType, str] = SLIType.AVAILABILITY,
+        sli_type: SLIType | str = SLIType.AVAILABILITY,
     ) -> None:
         if not 0 < slo_target < 1:
             raise ValueError("slo_target must be between 0 and 1 exclusive")
@@ -75,7 +74,7 @@ class BurnRateCalculator:
         self.slo_target = slo_target
         self.compliance_window_days = compliance_window_days
         self.compliance_window_hours = compliance_window_days * 24
-        self.sli_type = SLIType(sli_type)
+        self.sli_type: SLIType = SLIType(sli_type)
         # Allowed error budget = 1 - SLO target.
         # Round to cancel binary float noise (e.g. 1.0 - 0.999 → 0.0010000000000000009),
         # which otherwise makes a 1x burn rate compare as slightly under 1.0.
@@ -90,8 +89,8 @@ class BurnRateCalculator:
         error_rate: float,
         budget_consumed_fraction: float = 0.0,
         *,
-        bad_events: Optional[int] = None,
-        total_events: Optional[int] = None,
+        bad_events: int | None = None,
+        total_events: int | None = None,
     ) -> BurnRateResult:
         """
         Calculate current burn rate given an observed error rate.

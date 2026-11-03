@@ -170,7 +170,7 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-GitHub Actions runs the suite on Python 3.9–3.12.
+GitHub Actions runs Ruff, mypy, and the test suite on Python 3.10–3.13.
 
 ## License
 

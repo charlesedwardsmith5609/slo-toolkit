@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence, Tuple, Union
 
 from .burn_rate import BurnRateCalculator
 from .types import (
@@ -52,7 +52,7 @@ class MetricContract:
 # Reference multi-window thresholds for a 30-day compliance window.
 # Detection hours are absolute; burn rates scale via BurnRateCalculator.
 # Long windows are clamped to the compliance window at generate time.
-_REF_WINDOWS_30D: Sequence[Tuple[str, float, float, float, AlertSeverity]] = (
+_REF_WINDOWS_30D: Sequence[tuple[str, float, float, float, AlertSeverity]] = (
     ("Critical Fast Burn", 2, 1, 5, AlertSeverity.PAGE),
     ("High Slow Burn", 5, 6, 30, AlertSeverity.PAGE),
     ("Medium Burn", 10, 24, 72, AlertSeverity.TICKET),
@@ -85,14 +85,14 @@ class AlertConfig:
     sli_type: SLIType = SLIType.AVAILABILITY
     environment: str = "production"
     metric_contract: MetricContract = field(default_factory=MetricContract)
-    windows: List[AlertWindow] = field(default_factory=list)
+    windows: list[AlertWindow] = field(default_factory=list)
     schema_version: str = ALERT_CONFIG_SCHEMA_VERSION
 
     @property
     def error_budget(self) -> float:
         return round(1.0 - self.slo_target, 12)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, object]:
         """Versioned structured config (source of truth for exporters)."""
         return {
             "schema_version": self.schema_version,
@@ -161,9 +161,9 @@ class AlertConfig:
             win = f"{hours}h"
             lines += [
                 f"      - record: slo:burn_rate:ratio_{hours}h",
-                f"        expr: >",
+                "        expr: >",
                 f"          ({mc.prom_error_rate(win)}) / {self.error_budget}",
-                f"        labels:",
+                "        labels:",
                 f"          service: {self.service}",
                 f"          slo: {self.slo_name}",
                 f"          sli_type: {self.sli_type.value}",
@@ -176,18 +176,18 @@ class AlertConfig:
             alert = f"SLO{self._alert_id(w.name)}BurnRate"
             lines += [
                 f"      - alert: {alert}",
-                f"        expr: >",
+                "        expr: >",
                 f"          slo:burn_rate:ratio_{short_h}h > {w.burn_rate:.4f}",
-                f"          and",
+                "          and",
                 f"          slo:burn_rate:ratio_{long_h}h > {w.burn_rate:.4f}",
                 f"        for: {w.pending_for}",
-                f"        labels:",
+                "        labels:",
                 f"          severity: {w.severity.value}",
                 f"          service: {self.service}",
                 f"          slo: {self.slo_name}",
                 f"          sli_type: {self.sli_type.value}",
                 f"          env: {self.environment}",
-                f"        annotations:",
+                "        annotations:",
                 f"          summary: '{w.description}'",
                 f"          runbook: 'https://runbooks.internal/{self.service}/slo/{self.slo_name}'",
             ]
@@ -271,19 +271,18 @@ class AlertConfigGenerator:
 
     def _scaled_window_specs(
         self,
-        custom_windows: Optional[list],
-    ) -> List[Tuple[str, float, float, float, AlertSeverity]]:
+        custom_windows: list[tuple[str, float, float, float, str | AlertSeverity]] | None,
+    ) -> list[tuple[str, float, float, float, AlertSeverity]]:
         if custom_windows is not None:
-            out = []
+            out: list[tuple[str, float, float, float, AlertSeverity]] = []
             for name, budget_pct, short_h, long_h, severity in custom_windows:
+                sev = (
+                    severity
+                    if isinstance(severity, AlertSeverity)
+                    else AlertSeverity(severity)
+                )
                 out.append(
-                    (
-                        name,
-                        float(budget_pct),
-                        float(short_h),
-                        float(long_h),
-                        AlertSeverity(severity) if not isinstance(severity, AlertSeverity) else severity,
-                    )
+                    (name, float(budget_pct), float(short_h), float(long_h), sev)
                 )
             return out
 
@@ -304,10 +303,10 @@ class AlertConfigGenerator:
         self,
         service: str,
         slo_name: str,
-        custom_windows: Optional[list] = None,
+        custom_windows: list[tuple[str, float, float, float, str | AlertSeverity]] | None = None,
         *,
         environment: str = "production",
-        metric_contract: Optional[MetricContract] = None,
+        metric_contract: MetricContract | None = None,
         pending_for: str = "2m",
     ) -> AlertConfig:
         """
@@ -319,7 +318,7 @@ class AlertConfigGenerator:
         """
         contract = metric_contract or MetricContract(environment=environment)
 
-        windows: List[AlertWindow] = []
+        windows: list[AlertWindow] = []
         for name, budget_pct, short_h, long_h, severity in self._scaled_window_specs(
             custom_windows
         ):
