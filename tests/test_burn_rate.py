@@ -1,4 +1,5 @@
 """Tests for BurnRateCalculator."""
+
 import pytest
 from slo_toolkit.burn_rate import BurnRateCalculator
 from slo_toolkit.types import BurnRateStatus, SLIType
@@ -56,9 +57,7 @@ def test_invalid_error_rate(calc_99_9):
 
 def test_burn_rate_for_alert_threshold(calc_99_9):
     """2% budget in 1h for 30d window = 14.4x burn rate."""
-    br = calc_99_9.burn_rate_for_alert_threshold(
-        budget_fraction=0.02, window_hours=1
-    )
+    br = calc_99_9.burn_rate_for_alert_threshold(budget_fraction=0.02, window_hours=1)
     assert pytest.approx(br, rel=1e-3) == 14.4
 
 

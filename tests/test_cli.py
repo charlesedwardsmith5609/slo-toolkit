@@ -1,4 +1,5 @@
 """CLI smoke tests."""
+
 import json
 
 import pytest

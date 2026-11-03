@@ -151,11 +151,7 @@ class AlertConfig:
 
         # Recording rules for error rate at common windows used by alerts
         windows_needed = sorted(
-            {
-                int(h)
-                for w in self.windows
-                for h in (w.short_window_hours, w.long_window_hours)
-            }
+            {int(h) for w in self.windows for h in (w.short_window_hours, w.long_window_hours)}
         )
         for hours in windows_needed:
             win = f"{hours}h"
@@ -221,8 +217,8 @@ class AlertConfig:
                     "name": f"[SLO][{env}] {self.service} — {w.name}",
                     "type": "query alert",
                     "query": (
-                        f"formula(\"(query1 > {thresh:.8f}) && "
-                        f"(query2 > {thresh:.8f})\").last(\"{w.pending_for}\") > 0"
+                        f'formula("(query1 > {thresh:.8f}) && '
+                        f'(query2 > {thresh:.8f})").last("{w.pending_for}") > 0'
                     ),
                     "message": (
                         f"{w.description}\n"
@@ -276,14 +272,8 @@ class AlertConfigGenerator:
         if custom_windows is not None:
             out: list[tuple[str, float, float, float, AlertSeverity]] = []
             for name, budget_pct, short_h, long_h, severity in custom_windows:
-                sev = (
-                    severity
-                    if isinstance(severity, AlertSeverity)
-                    else AlertSeverity(severity)
-                )
-                out.append(
-                    (name, float(budget_pct), float(short_h), float(long_h), sev)
-                )
+                sev = severity if isinstance(severity, AlertSeverity) else AlertSeverity(severity)
+                out.append((name, float(budget_pct), float(short_h), float(long_h), sev))
             return out
 
         compliance_h = float(self.calculator.compliance_window_hours)

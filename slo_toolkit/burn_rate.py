@@ -110,9 +110,7 @@ class BurnRateCalculator:
         if budget_consumed_fraction < 0 or budget_consumed_fraction > 1:
             raise ValueError("budget_consumed_fraction must be between 0 and 1")
 
-        burn_rate = (
-            error_rate / self.error_budget if self.error_budget > 0 else float("inf")
-        )
+        burn_rate = error_rate / self.error_budget if self.error_budget > 0 else float("inf")
 
         budget_remaining = 1.0 - budget_consumed_fraction
         budget_remaining_pct = budget_remaining * 100

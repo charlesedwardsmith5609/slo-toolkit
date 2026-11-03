@@ -10,23 +10,15 @@ from hypothesis import strategies as st
 from slo_toolkit.burn_rate import BurnRateCalculator
 from slo_toolkit.types import BurnRateStatus
 
-slo_targets = st.floats(
-    min_value=0.9, max_value=0.9999, allow_nan=False, allow_infinity=False
-)
-error_rates = st.floats(
-    min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False
-)
+slo_targets = st.floats(min_value=0.9, max_value=0.9999, allow_nan=False, allow_infinity=False)
+error_rates = st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False)
 nonzero_error_rates = st.floats(
     min_value=1e-9, max_value=1.0, allow_nan=False, allow_infinity=False
 )
 consumed = st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False)
 windows = st.integers(min_value=1, max_value=90)
-budget_fractions = st.floats(
-    min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False
-)
-window_hours = st.floats(
-    min_value=0.25, max_value=24 * 30, allow_nan=False, allow_infinity=False
-)
+budget_fractions = st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False)
+window_hours = st.floats(min_value=0.25, max_value=24 * 30, allow_nan=False, allow_infinity=False)
 
 _STATUS_ORDER = {
     BurnRateStatus.OK: 0,
@@ -86,9 +78,7 @@ def test_alert_threshold_formula(
     bad=st.integers(min_value=0, max_value=100_000),
 )
 @settings(max_examples=150)
-def test_counts_match_rate_path(
-    slo_target: float, window_days: int, total: int, bad: int
-) -> None:
+def test_counts_match_rate_path(slo_target: float, window_days: int, total: int, bad: int) -> None:
     assume(bad <= total)
     calc = BurnRateCalculator(slo_target=slo_target, compliance_window_days=window_days)
     from_counts = calc.calculate_from_counts(bad_events=bad, total_events=total)

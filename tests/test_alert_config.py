@@ -1,4 +1,5 @@
 """Tests for Prometheus and Datadog alert rule generation."""
+
 import json
 from pathlib import Path
 

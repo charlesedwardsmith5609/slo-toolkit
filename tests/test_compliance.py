@@ -1,4 +1,5 @@
 """Tests for SLO compliance reporting and end-of-window projection."""
+
 import datetime
 
 import pytest
@@ -118,9 +119,7 @@ def test_highest_severity_period():
             200,  # 2% errors → high burn
         ),
     ]
-    report = SLOComplianceReport(
-        slo_target=0.999, compliance_window_days=30, periods=periods
-    )
+    report = SLOComplianceReport(slo_target=0.999, compliance_window_days=30, periods=periods)
     hotspot = report.highest_severity_period()
     assert hotspot is not None
     period, br = hotspot

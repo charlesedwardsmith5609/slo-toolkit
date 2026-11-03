@@ -44,11 +44,7 @@ class CompliancePeriod:
 
     @property
     def error_rate(self) -> float:
-        return (
-            self.error_requests / self.total_requests
-            if self.total_requests > 0
-            else 0.0
-        )
+        return self.error_requests / self.total_requests if self.total_requests > 0 else 0.0
 
     @property
     def duration_hours(self) -> float:
@@ -105,9 +101,7 @@ class SLOComplianceReport:
 
     @property
     def observed_error_rate(self) -> float:
-        return (
-            self.total_errors / self.total_requests if self.total_requests > 0 else 0.0
-        )
+        return self.total_errors / self.total_requests if self.total_requests > 0 else 0.0
 
     @property
     def rate_budget_ratio(self) -> float:
@@ -156,9 +150,7 @@ class SLOComplianceReport:
         return max(0.0, (1.0 - self.rate_budget_ratio) * 100)
 
     def cumulative_budget_remaining_pct(self, hours_elapsed: float) -> float:
-        return max(
-            0.0, (1.0 - self.cumulative_budget_consumed_fraction(hours_elapsed)) * 100
-        )
+        return max(0.0, (1.0 - self.cumulative_budget_consumed_fraction(hours_elapsed)) * 100)
 
     @property
     def compliant(self) -> bool:
